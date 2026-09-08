@@ -1,0 +1,12 @@
+datasets/*
+!datasets/README.md
+
+course_runs/
+systems/
+build/
+__pycache__/
+*.pyc
+*.tar.gz
+*.tar.zst
+*.zip
+

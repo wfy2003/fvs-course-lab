@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+"""Shared validation, execution, and result helpers for course adapters."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import shlex
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable
+
+
+ROOT = Path(__file__).resolve().parent
+VERSIONS = json.loads((ROOT / "versions.json").read_text(encoding="utf-8"))
+RESULT_COLUMNS = [
+    "system",
+    "tier",
+    "bucket",
+    "queries",
+    "selectivity_min",
+    "selectivity_median",
+    "selectivity_max",
+    "L",
+    "k",
+    "threads",
+    "beamwidth",
+    "qps",
+    "mean_latency_us",
+    "p999_latency_us",
+    "recall_percent",
+    "mean_ios",
+    "filter_skips",
+    "io_time_us",
+    "tunnel_time_us",
+    "process_time_us",
+    "raw_log",
+]
+
+
+def add_common_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--repo", type=Path, required=True, help="system source repository")
+    parser.add_argument("--dataset-root", type=Path, required=True)
+    parser.add_argument(
+        "--tier",
+        default="debug",
+        help="debug/formal alias or exact directory name such as debug_100000",
+    )
+    parser.add_argument("--run-root", type=Path, default=Path("course_runs"))
+    parser.add_argument("--dry-run", action="store_true")
+
+
+def add_build_arguments(parser: argparse.ArgumentParser) -> None:
+    add_common_arguments(parser)
+    parser.add_argument("--threads", type=int, default=min(os.cpu_count() or 1, 8))
+    parser.add_argument("--R", type=int, default=32)
+    parser.add_argument("--L-build", type=int, default=64)
+    parser.add_argument("--reuse-existing", action="store_true")
+
+
+def add_search_arguments(parser: argparse.ArgumentParser) -> None:
+    add_common_arguments(parser)
+    parser.add_argument("--bucket", choices=("low", "medium", "high"), required=True)
+    parser.add_argument("--threads", type=int, default=1)
+    parser.add_argument("--beamwidth", type=int, default=8)
+    parser.add_argument("--k", type=int, default=10)
+    parser.add_argument("--L", type=int, nargs="+", default=[20, 40, 80])
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="result directory suffix; defaults to a timestamp",
+    )
+
+
+def validate_positive(args: argparse.Namespace, names: list[str]) -> None:
+    for name in names:
+        value = getattr(args, name)
+        values = value if isinstance(value, list) else [value]
+        if any(item <= 0 for item in values):
+            raise ValueError(f"--{name.replace('_', '-')} must be positive")
+
+
+def resolve_tier(dataset_root: Path, requested: str) -> Path:
+    dataset_root = dataset_root.resolve()
+    exact = dataset_root / requested
+    if exact.is_dir():
+        return exact
+    matches = sorted(path for path in dataset_root.glob(f"{requested}_*") if path.is_dir())
+    if len(matches) != 1:
+        raise FileNotFoundError(
+            f"cannot resolve tier {requested!r} under {dataset_root}; matches={matches}"
+        )
+    return matches[0]
+
+
+def read_bin_header(path: Path) -> tuple[int, int]:
+    import struct
+
+    with path.open("rb") as handle:
+        header = handle.read(8)
+    if len(header) != 8:
+        raise ValueError(f"invalid binary matrix header: {path}")
+    return struct.unpack("<II", header)
+
+
+def read_spmat_header(path: Path) -> tuple[int, int, int]:
+    import struct
+
+    with path.open("rb") as handle:
+        header = handle.read(24)
+    if len(header) != 24:
+        raise ValueError(f"invalid spmat header: {path}")
+    return struct.unpack("<qqq", header)
+
+
+def validate_dataset(tier_dir: Path, bucket: str | None = None) -> dict[str, Any]:
+    base = tier_dir / "base.u8bin"
+    metadata = tier_dir / "base.metadata.spmat"
+    labels = tier_dir / "base.labels.txt"
+    for path in (base, metadata, labels):
+        if not path.is_file():
+            raise FileNotFoundError(path)
+    n, dim = read_bin_header(base)
+    meta_n, meta_cols, meta_nnz = read_spmat_header(metadata)
+    if n != meta_n:
+        raise ValueError(f"base/metadata row mismatch: {n} != {meta_n}")
+    result: dict[str, Any] = {
+        "base_size": n,
+        "dimension": dim,
+        "metadata_columns": meta_cols,
+        "metadata_nnz": meta_nnz,
+    }
+    if bucket is None:
+        return result
+
+    workload = tier_dir / "workloads" / bucket
+    required = (
+        workload / "query.u8bin",
+        workload / "query.metadata.spmat",
+        workload / "query_filters.csv",
+        workload / "labels.csv",
+        workload / "ground_truth.ids.ibin",
+        workload / "ground_truth.diskann.bin",
+    )
+    for path in required:
+        if not path.is_file():
+            raise FileNotFoundError(path)
+    nq, qdim = read_bin_header(workload / "query.u8bin")
+    gt_nq, gt_k = read_bin_header(workload / "ground_truth.ids.ibin")
+    qmeta_nq, qmeta_cols, qmeta_nnz = read_spmat_header(workload / "query.metadata.spmat")
+    if not (qdim == dim and nq == gt_nq == qmeta_nq and qmeta_nnz == nq):
+        raise ValueError("query, metadata, and ground-truth dimensions are inconsistent")
+    if qmeta_cols != meta_cols:
+        raise ValueError("base/query metadata columns differ")
+    result.update(
+        {
+            "workload_dir": workload,
+            "query_count": nq,
+            "ground_truth_k": gt_k,
+        }
+    )
+    return result
+
+
+def expected_index_prefix(args: argparse.Namespace, system: str, tier_dir: Path) -> Path:
+    return (
+        args.run_root.resolve()
+        / "indices"
+        / system
+        / tier_dir.name
+        / "yfcc"
+    )
+
+
+def result_directory(args: argparse.Namespace, system: str, tier_dir: Path) -> Path:
+    run_id = args.run_id or datetime.now().strftime("%Y%m%d-%H%M%S")
+    return (
+        args.run_root.resolve()
+        / "results"
+        / system
+        / tier_dir.name
+        / args.bucket
+        / run_id
+    )
+
+
+def git_revision(repo: Path) -> str | None:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def doctor(system: str, args: argparse.Namespace, binaries: list[Path]) -> int:
+    repo = args.repo.resolve()
+    tier = resolve_tier(args.dataset_root, args.tier)
+    info = validate_dataset(tier)
+    revision = git_revision(repo)
+    expected = VERSIONS[system]["commit"]
+    print(f"system:           {system}")
+    print(f"repository:       {repo}")
+    print(f"expected commit:  {expected}")
+    print(f"actual commit:    {revision or 'not a git checkout'}")
+    print(f"dataset tier:     {tier}")
+    print(f"base:             {info['base_size']} x {info['dimension']} uint8")
+    missing = [path for path in binaries if not path.is_file() or not os.access(path, os.X_OK)]
+    for binary in binaries:
+        state = "OK" if binary not in missing else "MISSING"
+        print(f"binary [{state}]: {binary}")
+    if revision != expected:
+        print("WARNING: repository revision differs from the course-pinned commit.", file=sys.stderr)
+    if missing:
+        print("ERROR: build the repository before running the adapter.", file=sys.stderr)
+        return 2
+    print("DOCTOR PASS")
+    return 0
+
+
+def command_string(command: list[str]) -> str:
+    return shlex.join(command)
+
+
+def run_logged(
+    command: list[str],
+    output_dir: Path,
+    metadata: dict[str, Any],
+    dry_run: bool,
+    extra_files: dict[str, str] | None = None,
+) -> str:
+    print(command_string(command))
+    if dry_run:
+        return ""
+    output_dir.mkdir(parents=True, exist_ok=False)
+    for relative_name, contents in (extra_files or {}).items():
+        target = output_dir / relative_name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(contents, encoding="utf-8")
+    record = {**metadata, "command": command}
+    (output_dir / "command.json").write_text(
+        json.dumps(record, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8"
+    )
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    captured: list[str] = []
+    assert process.stdout is not None
+    for line in process.stdout:
+        print(line, end="")
+        captured.append(line)
+    exit_code = process.wait()
+    text = "".join(captured)
+    (output_dir / "run.log").write_text(text, encoding="utf-8")
+    record["exit_code"] = exit_code
+    (output_dir / "command.json").write_text(
+        json.dumps(record, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8"
+    )
+    if exit_code != 0:
+        raise subprocess.CalledProcessError(exit_code, command)
+    return text
+
+
+def bucket_summary(workload_dir: Path) -> dict[str, str | int]:
+    values: list[float] = []
+    query_count = 0
+    with (workload_dir / "labels.csv").open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            values.append(float(row["selectivity"]))
+            query_count += int(row["query_count"])
+    values.sort()
+    middle = len(values) // 2
+    median = (
+        values[middle]
+        if len(values) % 2
+        else (values[middle - 1] + values[middle]) / 2
+    )
+    return {
+        "queries": query_count,
+        "selectivity_min": f"{values[0]:.9f}",
+        "selectivity_median": f"{median:.9f}",
+        "selectivity_max": f"{values[-1]:.9f}",
+    }
+
+
+def write_results(
+    output_dir: Path,
+    system: str,
+    tier: str,
+    bucket: str,
+    workload_dir: Path,
+    rows: list[dict[str, Any]],
+    raw_log: Path,
+) -> None:
+    summary = bucket_summary(workload_dir)
+    normalized = []
+    for row in rows:
+        normalized.append(
+            {
+                column: (
+                    row.get(column, "")
+                    if column not in summary
+                    else summary[column]
+                )
+                for column in RESULT_COLUMNS
+            }
+        )
+        normalized[-1].update(
+            {
+                "system": system,
+                "tier": tier,
+                "bucket": bucket,
+                "raw_log": str(raw_log),
+            }
+        )
+    with (output_dir / "results.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=RESULT_COLUMNS)
+        writer.writeheader()
+        writer.writerows(normalized)
+
+
+def numeric_rows(text: str, minimum_columns: int) -> list[list[float]]:
+    parsed: list[list[float]] = []
+    for line in text.splitlines():
+        tokens = line.split()
+        if len(tokens) < minimum_columns:
+            continue
+        try:
+            values = [float(token) for token in tokens]
+        except ValueError:
+            continue
+        parsed.append(values)
+    return parsed
+
+
+def main_guard(callback: Callable[[], int | None]) -> None:
+    try:
+        status = callback()
+    except (FileNotFoundError, FileExistsError, ValueError, RuntimeError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        raise SystemExit(2)
+    except subprocess.CalledProcessError as error:
+        print(f"ERROR: command exited with status {error.returncode}", file=sys.stderr)
+        raise SystemExit(error.returncode)
+    raise SystemExit(status or 0)
