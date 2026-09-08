@@ -7,7 +7,7 @@
 ### 1. 克隆课程仓库
 
 ```bash
-git clone <COURSE_REPOSITORY_URL> fvs-course-lab
+git clone https://github.com/wfy2003/fvs-course-lab.git
 cd fvs-course-lab
 ```
 
@@ -77,7 +77,7 @@ fvs-course-lab/
 ├── README.md
 ├── .gitignore
 ├── adapters/                 # 三系统构建、查询和结果归一化适配器
-├── config/dataset.env        # 教师填写数据集 URL 和 SHA-256
+├── config/dataset.env        # 数据集下载配置（已预置）
 ├── datasets/README.md        # 数据目录说明，不包含数据本体
 ├── docs/实验说明.md
 └── scripts/
@@ -92,11 +92,7 @@ fvs-course-lab/
 - 适配器参数帮助：`python3 adapters/<system>_adapter.py --help`
 - 数据完整性检查：`bash scripts/check_dataset.sh`
 
-## 教师发布前检查
+## 数据来源与许可
 
-1. 在 `config/dataset.env` 中填写数据集下载地址和压缩包 SHA-256。
-2. 确认数据包顶层目录名为 `yfcc_course_v1`。
-3. 确认课程指定系统提交与 `adapters/versions.json` 一致。
-4. 在一台干净环境中完成一次 `clone -> download -> doctor` 测试。
-5. 为公开或校外发布补充适当的仓库许可证及 YFCC 数据引用信息。
+课程数据集从 [NeurIPS 2023 BigANN Benchmark 的 YFCC Filtered Track](https://github.com/harsha-simhadri/big-ann-benchmarks/tree/main/neurips23) 固定种子抽样，并重新构造为单标签课程 workload。原始基准将该数据集标注为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。使用或再分发时请保留来源及许可说明；详细构造过程见数据包中的 `DATASET_CARD.md`。
 
