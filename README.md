@@ -1,98 +1,103 @@
 # 基于 SSD 的过滤向量检索系统课程实验
 
-本仓库提供课程实验说明、统一 YFCC 课程数据集下载入口，以及 PipeANN-Filter、GateANN、Filtered-DiskANN 三套系统的命令适配器。数据集和第三方系统源码不直接存入 Git 仓库。
+本实验使用统一的 YFCC 真实标签工作负载，对 PipeANN-Filter 和 GateANN 两种 SSD-resident 过滤向量检索设计进行复现、测试与比较。个人完成，周期 3 周。
+
+学生只需在 10 万向量的 Debug 数据上构建索引；100 万向量的 Formal 实验直接使用课程提供的预构建索引，以减少机器资源和等待时间。数据集、预构建索引和第三方源码均不提交到本仓库。
+
+## 开始之前
+
+建议环境：x86-64 Linux、Ubuntu 22.04/24.04、16 GiB 内存、至少 25 GiB 可用 SSD 空间。两套系统的正式查询在资源受限 PC 上均可运行，GateANN 不要求把完整图索引载入内存。
+
+安装公共依赖：
+
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake git curl zstd \
+  libaio-dev libgoogle-perftools-dev libopenblas-dev libeigen3-dev
+```
 
 ## 快速开始
 
-### 1. 克隆课程仓库
+### 1. 克隆课程仓库并下载数据
 
 ```bash
 git clone https://github.com/wfy2003/fvs-course-lab.git
 cd fvs-course-lab
-```
-
-### 2. 下载并校验数据集
-
-```bash
 bash scripts/download_dataset.sh
+bash scripts/check_dataset.sh
 ```
 
-数据集将解压到 `datasets/yfcc_course_v1/`。Debug 数据包含 10 万个 Base 向量，用于调试；Formal 数据包含 100 万个 Base 向量，用于正式实验。
+数据集解压到 `datasets/yfcc_course_v1/`，其中 Debug 为 10 万向量，Formal 为 100 万向量。
 
-### 3. 准备所选系统
-
-学生从 PipeANN-Filter、GateANN 和 Filtered-DiskANN 中选择一个系统，并使用课程指定版本。版本信息见 `adapters/versions.json`。
-
-```text
-PipeANN-Filter:    thustorage/PipeANN
-GateANN:           GyuyeongKim/GateANN-public
-Filtered-DiskANN:  microsoft/DiskANN（cpp_main 分支）
-```
-
-系统源码可以放在任意位置；运行适配器时通过 `--repo` 指定。不要将第三方系统源码、构建产物或实验索引提交到课程仓库。
-
-### 4. 先在 Debug 数据上检查
-
-以 PipeANN-Filter 为例：
+### 2. 获取并编译两套系统
 
 ```bash
-python3 adapters/pipeann_adapter.py doctor \
-  --repo /path/to/PipeANN \
-  --dataset-root "$PWD/datasets/yfcc_course_v1" \
-  --tier debug
+bash scripts/prepare_pipeann.sh
+bash scripts/prepare_gateann.sh
 ```
 
-构建索引并查询：
+脚本会克隆课程固定的源码提交、使用统一 AIO backend 编译，并自动为 GateANN 应用课程提供的一行兼容性补丁。默认源码目录为 `systems/`，也可把自定义目录作为脚本第一个参数传入。
+
+### 3. 在 Debug 数据上构建并查询
 
 ```bash
 python3 adapters/pipeann_adapter.py build \
-  --repo /path/to/PipeANN \
+  --repo "$PWD/systems/PipeANN" \
   --dataset-root "$PWD/datasets/yfcc_course_v1" \
-  --tier debug \
-  --run-root "$PWD/course_runs" \
-  --threads 8
+  --tier debug --run-root "$PWD/course_runs" --threads 8
 
-python3 adapters/pipeann_adapter.py search \
-  --repo /path/to/PipeANN \
+python3 adapters/gateann_adapter.py build \
+  --repo "$PWD/systems/GateANN-public" \
   --dataset-root "$PWD/datasets/yfcc_course_v1" \
-  --tier debug \
-  --run-root "$PWD/course_runs" \
-  --bucket medium \
-  --threads 1 --beamwidth 8 --k 10 --L 20 40 80
+  --tier debug --run-root "$PWD/course_runs" --threads 8
 ```
 
-GateANN 和 Filtered-DiskANN 只需替换适配器文件及 `--repo` 路径：
+索引构建成功后，一键执行两套系统的 High workload 并检查正确性：
+
+```bash
+bash scripts/run_debug_validation.sh
+```
+
+脚本每次生成新的 run-id，可安全重跑；检查器会核对两套系统的退出状态、数据规模、查询数、K、L、线程参数，并要求 High workload 的 Recall@10 不低于 80%。Debug 结果用于排错，不作为正式分析数据。
+
+### 4. 下载正式索引并运行统一实验
+
+```bash
+bash scripts/download_indexes.sh
+bash scripts/check_indexes.sh
+bash scripts/run_formal_experiments.sh
+```
+
+最后一条命令默认独立重复 3 次。每次包含每套系统 5 个配置：High Selectivity 上的 3 档搜索预算，以及固定代表性预算下的 Medium、Low；两套系统合计 10 行结果。参数固定在 `config/experiments.env`，未经说明不要修改。
+
+聚合结果位于：
 
 ```text
-adapters/gateann_adapter.py
-adapters/filtered_diskann_adapter.py
+course_runs/experiments/<experiment-id>/results.csv
 ```
 
-所有系统统一输出 `command.json`、`run.log` 和 `results.csv`。索引与结果默认保存在 `course_runs/`，该目录不会被 Git 跟踪。
+原始命令、日志和单次结果位于 `course_runs/results/`。详细任务、图表要求和提交规范见 [实验说明](docs/实验说明.md)，环境问题见 [系统准备说明](docs/系统准备.md)，写作结构见 [实验报告模板](docs/实验报告模板.md)。
 
-## 仓库内容
+## 仓库结构
 
 ```text
 fvs-course-lab/
-├── README.md
-├── .gitignore
-├── adapters/                 # 三系统构建、查询和结果归一化适配器
-├── config/dataset.env        # 数据集下载配置（已预置）
-├── datasets/README.md        # 数据目录说明，不包含数据本体
-├── docs/实验说明.md
-└── scripts/
-    ├── download_dataset.sh
-    └── check_dataset.sh
+├── adapters/                    # 两套必做系统和一个可选系统的统一适配器
+├── config/
+│   ├── dataset.env              # 数据集下载地址与校验值
+│   ├── indexes.env              # 正式索引下载地址与校验值
+│   └── experiments.env          # 正式实验固定参数
+├── datasets/README.md
+├── docs/
+│   ├── 实验说明.md
+│   ├── 实验报告模板.md
+│   └── 系统准备.md
+├── patches/gateann_aio_compat.patch
+└── scripts/                     # 下载、编译、校验、运行和汇总脚本
 ```
 
-## 实验入口
-
-- 正式任务、测试要求与提交内容：`docs/实验说明.md`
-- 固定源码版本、预期二进制和依赖提示：`docs/系统准备.md`
-- 适配器参数帮助：`python3 adapters/<system>_adapter.py --help`
-- 数据完整性检查：`bash scripts/check_dataset.sh`
+Filtered-DiskANN 适配器仍保留为自选扩展，不属于必做任务，也不参与统一的正式实验脚本。
 
 ## 数据来源与许可
 
-课程数据集从 [NeurIPS 2023 BigANN Benchmark 的 YFCC Filtered Track](https://github.com/harsha-simhadri/big-ann-benchmarks/tree/main/neurips23) 固定种子抽样，并重新构造为单标签课程 workload。原始基准将该数据集标注为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。使用或再分发时请保留来源及许可说明；详细构造过程见数据包中的 `DATASET_CARD.md`。
-
+课程数据集从 [NeurIPS 2023 BigANN Benchmark 的 YFCC Filtered Track](https://github.com/harsha-simhadri/big-ann-benchmarks/tree/main/neurips23) 固定种子抽样，并以 YFCC 原始标签构造单标签过滤查询。原始基准将该数据集标注为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。详细构造过程、标签和校验值见数据包中的 `DATASET_CARD.md`。

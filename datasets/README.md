@@ -19,3 +19,8 @@ datasets/yfcc_course_v1/
 
 可随时执行 `bash scripts/check_dataset.sh` 验证数据完整性。
 
+Formal 数据只包含向量、标签、查询和 Ground Truth，不包含系统索引。两套正式索引通过仓库根目录的以下命令单独下载：
+
+```bash
+bash scripts/download_indexes.sh
+```

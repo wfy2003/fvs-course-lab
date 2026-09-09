@@ -24,7 +24,7 @@ if [[ "$dataset_url" == "REPLACE_BEFORE_RELEASE" || \
   exit 2
 fi
 
-for command_name in curl sha256sum tar; do
+for command_name in curl sha256sum tar zstd; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "ERROR: required command not found: $command_name" >&2
     exit 2

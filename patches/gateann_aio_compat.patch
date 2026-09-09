@@ -1,0 +1,11 @@
+diff --git a/src/utils/linux_aligned_file_reader.cpp b/src/utils/linux_aligned_file_reader.cpp
+index 7a2743a..54a7977 100644
+--- a/src/utils/linux_aligned_file_reader.cpp
++++ b/src/utils/linux_aligned_file_reader.cpp
+@@ -416,5 +416,5 @@ void LinuxAlignedFileReader::send_io(std::vector<IORequest> &reqs, void *ctx, bo
+     } else {
+       io_prep_pread(cb.data() + j, this->file_desc, reqs[j].buf, reqs[j].len, reqs[j].offset);
+     }
+-    cb.data = (void *) &reqs[j];  // set user data to point to the request
++    cb[j].data = (void *) &reqs[j];  // set user data to point to the request
+   }

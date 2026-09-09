@@ -7,9 +7,11 @@ import argparse
 import csv
 import json
 import os
+import resource
 import shlex
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -29,11 +31,19 @@ RESULT_COLUMNS = [
     "k",
     "threads",
     "beamwidth",
+    "system_commit",
+    "index_bytes",
+    "elapsed_seconds",
+    "peak_rss_kb",
     "qps",
     "mean_latency_us",
     "p999_latency_us",
     "recall_percent",
     "mean_ios",
+    "pre_filter_queries",
+    "in_filter_queries",
+    "post_filter_queries",
+    "filter_false_positives",
     "filter_skips",
     "io_time_us",
     "tunnel_time_us",
@@ -201,7 +211,26 @@ def git_revision(repo: Path) -> str | None:
         return None
 
 
-def doctor(system: str, args: argparse.Namespace, binaries: list[Path]) -> int:
+def cmake_cache_values(repo: Path) -> dict[str, str]:
+    cache = repo / "build" / "CMakeCache.txt"
+    if not cache.is_file():
+        return {}
+    values: dict[str, str] = {}
+    for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line or line.startswith(("//", "#")) or ":" not in line or "=" not in line:
+            continue
+        name_and_type, value = line.split("=", 1)
+        name, _cache_type = name_and_type.split(":", 1)
+        values[name] = value
+    return values
+
+
+def doctor(
+    system: str,
+    args: argparse.Namespace,
+    binaries: list[Path],
+    expected_cmake: dict[str, str] | None = None,
+) -> int:
     repo = args.repo.resolve()
     tier = resolve_tier(args.dataset_root, args.tier)
     info = validate_dataset(tier)
@@ -217,10 +246,26 @@ def doctor(system: str, args: argparse.Namespace, binaries: list[Path]) -> int:
     for binary in binaries:
         state = "OK" if binary not in missing else "MISSING"
         print(f"binary [{state}]: {binary}")
+    configuration_errors = []
+    cache_values = cmake_cache_values(repo)
+    for name, expected_value in (expected_cmake or {}).items():
+        actual_value = cache_values.get(name)
+        state = "OK" if actual_value == expected_value else "MISMATCH"
+        print(f"cmake [{state}]:  {name}={actual_value or 'missing'}")
+        if state != "OK":
+            configuration_errors.append((name, expected_value, actual_value))
     if revision != expected:
         print("WARNING: repository revision differs from the course-pinned commit.", file=sys.stderr)
     if missing:
         print("ERROR: build the repository before running the adapter.", file=sys.stderr)
+        return 2
+    if configuration_errors:
+        for name, expected_value, actual_value in configuration_errors:
+            print(
+                f"ERROR: {name}={actual_value or 'missing'}, expected {expected_value}.",
+                file=sys.stderr,
+            )
+        print("Re-run the course preparation script.", file=sys.stderr)
         return 2
     print("DOCTOR PASS")
     return 0
@@ -249,6 +294,7 @@ def run_logged(
     (output_dir / "command.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8"
     )
+    started = time.perf_counter()
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -262,15 +308,44 @@ def run_logged(
         print(line, end="")
         captured.append(line)
     exit_code = process.wait()
+    elapsed_seconds = time.perf_counter() - started
+    peak_rss_kb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     text = "".join(captured)
     (output_dir / "run.log").write_text(text, encoding="utf-8")
     record["exit_code"] = exit_code
+    record["elapsed_seconds"] = elapsed_seconds
+    record["peak_rss_kb"] = peak_rss_kb
     (output_dir / "command.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8"
     )
     if exit_code != 0:
         raise subprocess.CalledProcessError(exit_code, command)
     return text
+
+
+def index_size_bytes(prefix: Path) -> int:
+    return sum(
+        path.stat().st_size
+        for path in prefix.parent.iterdir()
+        if path.is_file() and path.name.startswith(prefix.name)
+    )
+
+
+def enrich_rows(
+    rows: list[dict[str, Any]],
+    repo: Path,
+    prefix: Path,
+    output_dir: Path,
+) -> None:
+    record = json.loads((output_dir / "command.json").read_text(encoding="utf-8"))
+    shared = {
+        "system_commit": git_revision(repo) or "",
+        "index_bytes": index_size_bytes(prefix),
+        "elapsed_seconds": record.get("elapsed_seconds", ""),
+        "peak_rss_kb": record.get("peak_rss_kb", ""),
+    }
+    for row in rows:
+        row.update(shared)
 
 
 def bucket_summary(workload_dir: Path) -> dict[str, str | int]:

@@ -1,13 +1,14 @@
 {
   "pipeann": {
     "repository": "https://github.com/thustorage/PipeANN.git",
-    "commit": "d690fdb3f77de0e04cfe74ae11addb3cc17ee82e",
-    "note": "Adapter verified against the course/local PipeANN snapshot."
+    "commit": "2ec84fe20c37dc3cc236b66f7eba31c0cc80bf1e",
+    "note": "Official main commit with the unified filter-config schema."
   },
   "gateann": {
     "repository": "https://github.com/GyuyeongKim/GateANN-public.git",
     "commit": "71e87cbf0e25c0400c0109dd25a64a7c4dccc9dd",
-    "note": "Official artifact main branch inspected on 2026-09-08."
+    "course_patch": "patches/gateann_aio_compat.patch",
+    "note": "Official artifact commit plus a one-line AIO compile fix supplied by the course."
   },
   "filtered_diskann": {
     "repository": "https://github.com/microsoft/DiskANN.git",

@@ -12,6 +12,7 @@ from _common import (
     add_common_arguments,
     add_search_arguments,
     doctor,
+    enrich_rows,
     expected_index_prefix,
     main_guard,
     numeric_rows,
@@ -66,6 +67,10 @@ def parse_results(text: str, args: argparse.Namespace) -> list[dict]:
                 "mean_latency_us": values[3],
                 "mean_ios": values[-2],
                 "recall_percent": values[-1],
+                "pre_filter_queries": values[4],
+                "in_filter_queries": values[10],
+                "post_filter_queries": values[16],
+                "filter_false_positives": values[8] + values[14] + values[20],
             }
         )
     return rows
@@ -76,7 +81,12 @@ def run() -> int:
     repo = args.repo.resolve()
     build_bin, search_bin = binaries(repo)
     if args.action == "doctor":
-        return doctor(SYSTEM, args, [build_bin, search_bin])
+        return doctor(
+            SYSTEM,
+            args,
+            [build_bin, search_bin],
+            {"CMAKE_BUILD_TYPE": "Release", "IO_ENGINE": "aio"},
+        )
 
     tier = resolve_tier(args.dataset_root, args.tier)
     info = validate_dataset(tier, getattr(args, "bucket", None))
@@ -116,12 +126,15 @@ def run() -> int:
     output_dir = result_directory(args, SYSTEM, tier)
     workload = info["workload_dir"]
     config = {
-        "base": [{"key": 0, "type": "label", "file": str(prefix) + ".label.0"}],
-        "query": {
+        "attr_indexes": [{
+            "name": "tags",
             "key": 0,
-            "base_key": 0,
-            "type": "label_and",
-            "file": str(workload / "query.metadata.spmat"),
+            "type": "label",
+            "file": str(prefix) + ".label.0",
+        }],
+        "filter": "array_contains_all(tags, $$query_tags)",
+        "bindings": {
+            "query_tags": str(workload / "query.metadata.spmat"),
         },
     }
     config_text = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
@@ -145,6 +158,7 @@ def run() -> int:
     rows = parse_results(text, args)
     if len(rows) != len(args.L):
         raise RuntimeError(f"expected {len(args.L)} result rows, parsed {len(rows)}")
+    enrich_rows(rows, repo, prefix, output_dir)
     write_results(
         output_dir, SYSTEM, tier.name, args.bucket, workload, rows,
         output_dir / "run.log",

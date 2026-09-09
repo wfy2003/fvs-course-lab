@@ -12,6 +12,7 @@ from _common import (
     add_common_arguments,
     add_search_arguments,
     doctor,
+    enrich_rows,
     expected_index_prefix,
     main_guard,
     numeric_rows,
@@ -207,6 +208,7 @@ def run() -> int:
     rows = parse_results(text, args)
     if len(rows) != len(args.L):
         raise RuntimeError(f"expected {len(args.L)} result rows, parsed {len(rows)}")
+    enrich_rows(rows, repo, prefix, output_dir)
     write_results(
         output_dir, SYSTEM, tier.name, args.bucket, workload, rows,
         output_dir / "run.log",

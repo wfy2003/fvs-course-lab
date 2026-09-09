@@ -11,6 +11,7 @@ from _common import (
     add_common_arguments,
     add_search_arguments,
     doctor,
+    enrich_rows,
     expected_index_prefix,
     main_guard,
     numeric_rows,
@@ -40,6 +41,7 @@ def parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--full-adj-neighbors", type=int, default=32)
     search_parser.add_argument("--mem-L", type=int, default=0)
     search_parser.add_argument("--cache-budget", type=int, default=0)
+    search_parser.set_defaults(L=[160, 320, 640])
     return top
 
 
@@ -81,7 +83,12 @@ def run() -> int:
     repo = args.repo.resolve()
     build_bin, search_bin = binaries(repo)
     if args.action == "doctor":
-        return doctor(SYSTEM, args, [build_bin, search_bin])
+        return doctor(
+            SYSTEM,
+            args,
+            [build_bin, search_bin],
+            {"CMAKE_BUILD_TYPE": "Release", "USE_AIO": "ON"},
+        )
 
     tier = resolve_tier(args.dataset_root, args.tier)
     info = validate_dataset(tier, getattr(args, "bucket", None))
@@ -138,6 +145,7 @@ def run() -> int:
     rows = parse_results(text, args)
     if len(rows) != len(args.L):
         raise RuntimeError(f"expected {len(args.L)} result rows, parsed {len(rows)}")
+    enrich_rows(rows, repo, prefix, output_dir)
     write_results(
         output_dir, SYSTEM, tier.name, args.bucket, workload, rows,
         output_dir / "run.log",

@@ -10,6 +10,5 @@ if [[ ! -f "$dataset_dir/checksums.sha256" ]]; then
   exit 2
 fi
 
-(cd "$dataset_dir" && sha256sum -c checksums.sha256)
+(cd "$dataset_dir" && sha256sum --quiet -c checksums.sha256)
 echo "Dataset verification passed: $dataset_dir"
-
