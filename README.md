@@ -76,7 +76,7 @@ bash scripts/run_formal_experiments.sh
 course_runs/experiments/<experiment-id>/results.csv
 ```
 
-原始命令、日志和单次结果位于 `course_runs/results/`。详细任务、图表要求和提交规范见 [实验说明](docs/实验说明.md)，环境问题见 [系统准备说明](docs/系统准备.md)，写作结构见 [实验报告模板](docs/实验报告模板.md)。
+原始命令、日志和单次结果位于 `course_runs/results/`。详细任务、图表要求和提交规范见 [实验说明](docs/实验说明.md)，论文和系统源码见 [参考文献与源码入口](docs/参考资料.md)，环境问题见 [系统准备说明](docs/系统准备.md)，写作结构见 [实验报告模板](docs/实验报告模板.md)。
 
 ## 仓库结构
 
@@ -89,6 +89,7 @@ fvs-course-lab/
 │   └── experiments.env          # 正式实验固定参数
 ├── datasets/README.md
 ├── docs/
+│   ├── 参考资料.md
 │   ├── 实验说明.md
 │   ├── 实验报告模板.md
 │   └── 系统准备.md
