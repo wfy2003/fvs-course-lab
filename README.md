@@ -20,14 +20,27 @@ sudo apt install -y build-essential cmake git curl zstd \
 
 ### 1. 克隆课程仓库并下载数据
 
+国内环境推荐从 Gitee 克隆：
+
+```bash
+git clone https://gitee.com/wei-fangyu/fvs-course-lab.git
+```
+
+也可以使用 GitHub 备用入口：
+
 ```bash
 git clone https://github.com/wfy2003/fvs-course-lab.git
+```
+
+进入仓库并下载数据：
+
+```bash
 cd fvs-course-lab
 bash scripts/download_dataset.sh
 bash scripts/check_dataset.sh
 ```
 
-数据集解压到 `datasets/yfcc_course_v1/`，其中 Debug 为 10 万向量，Formal 为 100 万向量。
+下载脚本默认从 GitHub Release 获取数据集。数据集解压到 `datasets/yfcc_course_v1/`，其中 Debug 为 10 万向量，Formal 为 100 万向量。
 
 如果无法从 GitHub Release 下载数据集或正式索引，可使用[夸克网盘备用源](https://pan.quark.cn/s/639952d1c355)手动下载。三个压缩包的放置位置和后续处理见[《脚本使用说明：备用下载渠道》](docs/脚本使用说明.md#备用下载渠道github-不可用时)。
 
