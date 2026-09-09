@@ -335,11 +335,14 @@ def doctor(
         print(f"cmake [{state}]:  {name}={actual_value or 'missing'}")
         if state != "OK":
             configuration_errors.append((name, expected_value, actual_value))
-    if revision != expected:
-        print("WARNING: repository revision differs from the course-pinned commit.", file=sys.stderr)
+    revision_error = revision != expected
+    if revision_error:
+        print(
+            "ERROR: repository revision differs from the course-pinned commit.",
+            file=sys.stderr,
+        )
     if missing:
         print("ERROR: build the repository before running the adapter.", file=sys.stderr)
-        return 2
     if configuration_errors:
         for name, expected_value, actual_value in configuration_errors:
             print(
@@ -347,6 +350,7 @@ def doctor(
                 file=sys.stderr,
             )
         print("Re-run the course preparation script.", file=sys.stderr)
+    if revision_error or missing or configuration_errors:
         return 2
     print("DOCTOR PASS")
     return 0
