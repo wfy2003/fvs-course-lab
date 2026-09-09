@@ -29,6 +29,8 @@ bash scripts/check_dataset.sh
 
 数据集解压到 `datasets/yfcc_course_v1/`，其中 Debug 为 10 万向量，Formal 为 100 万向量。
 
+如果无法从 GitHub Release 下载数据集或正式索引，可使用[夸克网盘备用源](https://pan.quark.cn/s/639952d1c355)手动下载。三个压缩包的放置位置和后续处理见[《脚本使用说明：备用下载渠道》](docs/脚本使用说明.md#备用下载渠道github-不可用时)。
+
 ### 2. 获取并编译两套系统
 
 ```bash
