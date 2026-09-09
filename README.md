@@ -78,28 +78,4 @@ course_runs/experiments/<experiment-id>/results.csv
 
 原始命令、日志和单次结果位于 `course_runs/results/`。详细任务、图表要求和提交规范见 [实验说明](docs/实验说明.md)，论文和系统源码见 [参考文献与源码入口](docs/参考资料.md)，环境问题见 [系统准备说明](docs/系统准备.md)，写作结构见 [实验报告模板](docs/实验报告模板.md)。
 
-## 仓库结构
-
-```text
-fvs-course-lab/
-├── adapters/                    # 两套必做系统和一个可选系统的统一适配器
-├── config/
-│   ├── dataset.env              # 数据集下载地址与校验值
-│   ├── indexes.env              # 正式索引下载地址与校验值
-│   └── experiments.env          # 正式实验固定参数
-├── datasets/README.md
-├── docs/
-│   ├── 参考资料.md
-│   ├── 实验说明.md
-│   ├── 实验报告模板.md
-│   └── 系统准备.md
-├── patches/gateann_aio_compat.patch
-├── scripts/                     # 下载、编译、校验、运行和汇总脚本
-└── tests/                       # 课程适配器回归测试
-```
-
-Filtered-DiskANN 适配器仍保留为自选扩展，不属于必做任务，也不参与统一的正式实验脚本。
-
-## 数据来源与许可
-
-课程数据集从 [NeurIPS 2023 BigANN Benchmark 的 YFCC Filtered Track](https://github.com/harsha-simhadri/big-ann-benchmarks/tree/main/neurips23) 固定种子抽样，并以 YFCC 原始标签构造单标签过滤查询。原始基准将该数据集标注为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。详细构造过程、标签和校验值见数据包中的 `DATASET_CARD.md`。
+> 各脚本的输入、输出、参数和重试行为见[《脚本使用说明》](docs/脚本使用说明.md)。
