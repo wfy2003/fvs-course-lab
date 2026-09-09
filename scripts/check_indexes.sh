@@ -20,7 +20,7 @@ verify_index() {
     return 2
   fi
 
-  (cd "$index_dir" && sha256sum --quiet -c checksums.sha256)
+  (cd "$index_dir" && sed '/^[[:space:]]*$/d' checksums.sha256 | sha256sum --quiet -c -)
   python3 - "$index_dir/manifest.json" "$expected_system" <<'PY'
 import json
 import sys
