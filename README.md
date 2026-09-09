@@ -94,7 +94,8 @@ fvs-course-lab/
 │   ├── 实验报告模板.md
 │   └── 系统准备.md
 ├── patches/gateann_aio_compat.patch
-└── scripts/                     # 下载、编译、校验、运行和汇总脚本
+├── scripts/                     # 下载、编译、校验、运行和汇总脚本
+└── tests/                       # 课程适配器回归测试
 ```
 
 Filtered-DiskANN 适配器仍保留为自选扩展，不属于必做任务，也不参与统一的正式实验脚本。

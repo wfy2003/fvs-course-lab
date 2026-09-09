@@ -11,11 +11,14 @@ from _common import (
     add_build_arguments,
     add_common_arguments,
     add_search_arguments,
+    begin_index_build,
     doctor,
     enrich_rows,
     expected_index_prefix,
+    finish_index_build,
     main_guard,
     numeric_rows,
+    preserve_failed_index_build,
     resolve_tier,
     result_directory,
     run_logged,
@@ -111,19 +114,15 @@ def run() -> int:
     info = validate_dataset(tier, getattr(args, "bucket", None))
     prefix = expected_index_prefix(args, SYSTEM, tier)
     signature = Path(str(prefix) + "_disk.index")
-    diskann_labels = prefix.parent / "base.labels.diskann.txt"
 
     if args.action == "build":
         validate_positive(args, ["threads", "R", "L_build", "search_dram_gb", "build_dram_gb"])
         if args.pq_disk_bytes < 0:
             raise ValueError("--pq-disk-bytes cannot be negative")
-        if signature.exists():
-            if args.reuse_existing:
-                print(f"Reusing existing index: {signature}")
-                return 0
-            raise FileExistsError(
-                f"index already exists: {signature}; pass --reuse-existing to keep it"
-            )
+        attempt = begin_index_build(args, SYSTEM, tier)
+        if attempt is None:
+            return 0
+        diskann_labels = attempt.staging_prefix.parent / "base.labels.diskann.txt"
         label_text, replaced = sanitized_label_text(
             tier / "base.labels.txt", info["base_size"]
         )
@@ -132,7 +131,7 @@ def run() -> int:
             "--data_type", "uint8",
             "--dist_fn", "l2",
             "--data_path", str(tier / "base.u8bin"),
-            "--index_path_prefix", str(prefix),
+            "--index_path_prefix", str(attempt.staging_prefix),
             "-R", str(args.R),
             "-L", str(args.L_build),
             "--FilteredLbuild", str(args.L_build),
@@ -144,20 +143,28 @@ def run() -> int:
             "--label_file", str(diskann_labels),
         ]
         if not args.dry_run:
-            prefix.parent.mkdir(parents=True, exist_ok=True)
             diskann_labels.write_text(label_text, encoding="utf-8")
-        build_log = args.run_root.resolve() / "builds" / SYSTEM / tier.name
-        run_logged(
-            command, build_log,
-            {
-                "system": SYSTEM,
-                "tier": tier.name,
-                "dataset": info,
-                "unlabeled_rows_assigned_sentinel": replaced,
-                "unlabeled_sentinel": UNLABELED_SENTINEL,
-            },
-            args.dry_run,
-        )
+        try:
+            run_logged(
+                command,
+                attempt.log_directory,
+                {
+                    "system": SYSTEM,
+                    "tier": tier.name,
+                    "dataset": info,
+                    "build_attempt": attempt.attempt_id,
+                    "final_index_prefix": str(attempt.final_prefix),
+                    "unlabeled_rows_assigned_sentinel": replaced,
+                    "unlabeled_sentinel": UNLABELED_SENTINEL,
+                },
+                args.dry_run,
+            )
+            if not args.dry_run:
+                finish_index_build(attempt)
+        except Exception:
+            if not args.dry_run:
+                preserve_failed_index_build(attempt)
+            raise
         if args.dry_run:
             print(f"Label sanitization would replace {replaced} empty rows.")
         return 0

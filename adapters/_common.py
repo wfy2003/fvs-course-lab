@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -50,6 +51,14 @@ RESULT_COLUMNS = [
     "process_time_us",
     "raw_log",
 ]
+
+
+@dataclass(frozen=True)
+class IndexBuildAttempt:
+    attempt_id: str
+    final_prefix: Path
+    staging_prefix: Path
+    log_directory: Path
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -184,6 +193,78 @@ def expected_index_prefix(args: argparse.Namespace, system: str, tier_dir: Path)
         / tier_dir.name
         / "yfcc"
     )
+
+
+def begin_index_build(
+    args: argparse.Namespace,
+    system: str,
+    tier_dir: Path,
+) -> IndexBuildAttempt | None:
+    final_prefix = expected_index_prefix(args, system, tier_dir)
+    signature = Path(str(final_prefix) + "_disk.index")
+    if signature.is_file():
+        if args.reuse_existing:
+            print(f"Reusing existing index: {signature}")
+            return None
+        raise FileExistsError(
+            f"index already exists: {signature}; pass --reuse-existing to keep it"
+        )
+
+    attempt_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    index_parent = final_prefix.parent.parent
+    final_directory = final_prefix.parent
+    staging_directory = index_parent / f".{tier_dir.name}.building-{attempt_id}"
+    attempt = IndexBuildAttempt(
+        attempt_id=attempt_id,
+        final_prefix=final_prefix,
+        staging_prefix=staging_directory / final_prefix.name,
+        log_directory=(
+            args.run_root.resolve()
+            / "builds"
+            / system
+            / tier_dir.name
+            / attempt_id
+        ),
+    )
+    if args.dry_run:
+        return attempt
+
+    index_parent.mkdir(parents=True, exist_ok=True)
+    if final_directory.exists():
+        preserved = index_parent / f".{tier_dir.name}.incomplete-{attempt_id}"
+        final_directory.rename(preserved)
+        print(f"Preserved incomplete index from an earlier build: {preserved}")
+
+    staging_directory.mkdir(parents=False, exist_ok=False)
+    return attempt
+
+
+def finish_index_build(attempt: IndexBuildAttempt) -> None:
+    staging_directory = attempt.staging_prefix.parent
+    signature = Path(str(attempt.staging_prefix) + "_disk.index")
+    if not signature.is_file():
+        raise RuntimeError(f"build exited successfully but index is missing: {signature}")
+    if attempt.final_prefix.parent.exists():
+        raise FileExistsError(
+            f"cannot publish index because target exists: {attempt.final_prefix.parent}"
+        )
+    staging_directory.rename(attempt.final_prefix.parent)
+    print(f"Index ready: {attempt.final_prefix}")
+
+
+def preserve_failed_index_build(attempt: IndexBuildAttempt) -> None:
+    staging_directory = attempt.staging_prefix.parent
+    if not staging_directory.exists():
+        return
+    failed_directory = staging_directory.with_name(
+        f".{attempt.final_prefix.parent.name}.failed-{attempt.attempt_id}"
+    )
+    staging_directory.rename(failed_directory)
+    print(
+        f"Incomplete index retained for diagnosis: {failed_directory}",
+        file=sys.stderr,
+    )
+    print("Run the same build command again to start a clean retry.", file=sys.stderr)
 
 
 def result_directory(args: argparse.Namespace, system: str, tier_dir: Path) -> Path:

@@ -10,11 +10,14 @@ from _common import (
     add_build_arguments,
     add_common_arguments,
     add_search_arguments,
+    begin_index_build,
     doctor,
     enrich_rows,
     expected_index_prefix,
+    finish_index_build,
     main_guard,
     numeric_rows,
+    preserve_failed_index_build,
     resolve_tier,
     result_directory,
     run_logged,
@@ -97,26 +100,33 @@ def run() -> int:
 
     if args.action == "build":
         validate_positive(args, ["threads", "R", "L_build", "pq_bytes", "merge_memory_gb"])
-        if signature.exists():
-            if args.reuse_existing:
-                print(f"Reusing existing index: {signature}")
-                return 0
-            raise FileExistsError(
-                f"index already exists: {signature}; pass --reuse-existing to keep it"
-            )
+        attempt = begin_index_build(args, SYSTEM, tier)
+        if attempt is None:
+            return 0
         command = [
-            str(build_bin), "uint8", str(tier / "base.u8bin"), str(prefix),
+            str(build_bin), "uint8", str(tier / "base.u8bin"), str(attempt.staging_prefix),
             str(args.R), str(args.L_build), str(args.pq_bytes),
             str(args.merge_memory_gb), str(args.threads), "l2", "pq",
         ]
-        if not args.dry_run:
-            prefix.parent.mkdir(parents=True, exist_ok=True)
-        build_log = args.run_root.resolve() / "builds" / SYSTEM / tier.name
-        run_logged(
-            command, build_log,
-            {"system": SYSTEM, "tier": tier.name, "dataset": info},
-            args.dry_run,
-        )
+        try:
+            run_logged(
+                command,
+                attempt.log_directory,
+                {
+                    "system": SYSTEM,
+                    "tier": tier.name,
+                    "dataset": info,
+                    "build_attempt": attempt.attempt_id,
+                    "final_index_prefix": str(attempt.final_prefix),
+                },
+                args.dry_run,
+            )
+            if not args.dry_run:
+                finish_index_build(attempt)
+        except Exception:
+            if not args.dry_run:
+                preserve_failed_index_build(attempt)
+            raise
         return 0
 
     validate_positive(args, ["threads", "beamwidth", "k", "L", "full_adj_neighbors"])
